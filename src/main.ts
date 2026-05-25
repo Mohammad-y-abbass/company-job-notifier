@@ -58,6 +58,7 @@ async function main() {
       );
 
       let isMemoryStateMutated = false;
+      let didScrapeLinkedIn = false;
 
       // ---------------------------------------------------------
       // Action Channel A: Corporate Careers Page Verification
@@ -88,13 +89,11 @@ async function main() {
         await context.close();
       }
 
-      // Short breathing window between testing internal channels
-      await sleep(3000);
-
       // ---------------------------------------------------------
       // Action Channel B: Authenticated LinkedIn Post Verification
       // ---------------------------------------------------------
       if (company.linkedinUrl) {
+        didScrapeLinkedIn = true;
         const context = await browserManager.createStealthContext();
 
         const res = await linkedInScraper.scrape(context, company.linkedinUrl);
@@ -132,10 +131,10 @@ async function main() {
       // ---------------------------------------------------------
       // Human-Emulation Cool Down Engine
       // ---------------------------------------------------------
-      if (i < companies.length - 1) {
+      if (didScrapeLinkedIn && i < companies.length - 1) {
         const structuralDelay = getRandomPacingDelay();
         console.log(
-          `\n[Pacing Shield] Sequential run safe. Sleeping for ${(structuralDelay / 1000).toFixed(1)}s before the next target...`,
+          `\n[LinkedIn Pacing] Sleeping for ${(structuralDelay / 1000).toFixed(1)}s before the next LinkedIn target...`,
         );
         await sleep(structuralDelay);
       }
