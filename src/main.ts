@@ -113,7 +113,11 @@ async function checkLinkedInFeeds(
   const context = await browserManager.createStealthContext();
 
   try {
-    const res = await linkedInScraper.scrape(context, company.linkedinUrl);
+    const res = await linkedInScraper.scrape(
+      context,
+      company.linkedinUrl,
+      `LinkedIn ${index + 1}/${total}`,
+    );
     if (res.success && res.hash) {
       if (res.hash !== company.lastLinkedInHash) {
         await notifier.notify(

@@ -8,17 +8,36 @@ export class CareersScraper {
    */
   async scrape(context: BrowserContext, companyWebsite: string): Promise<ScrapeResult> {
     const page = await context.newPage();
-    const url = this.buildCareersUrl(companyWebsite);
+    const urls = this.buildCareersUrlCandidates(companyWebsite);
     await this.blockVisualAssets(page);
+    let currentUrl = urls[0] ?? companyWebsite;
+    let lastError = "";
 
     try {
-      console.log(`[Careers] Loading page safely: ${url}`);
+      for (const url of urls) {
+        currentUrl = url;
+        console.log(`[Careers] Loading page safely: ${url}`);
 
-      // Navigate and wait until network connections drop to zero (crucial for SPAs)
-      await page.goto(url, {
-        waitUntil: "networkidle",
-        timeout: 45000,
-      });
+        try {
+          // Navigate and wait until network connections drop to zero (crucial for SPAs)
+          await page.goto(url, {
+            waitUntil: "networkidle",
+            timeout: 45000,
+          });
+          lastError = "";
+          break;
+        } catch (error: any) {
+          lastError = error.message;
+          console.warn(`[Careers Retry] ${url} failed: ${lastError}`);
+        }
+      }
+
+      if (lastError) {
+        return {
+          success: false,
+          error: lastError,
+        };
+      }
 
       // Inject a short delay to allow background DOM animations/hydration to settle
       await page.waitForTimeout(2000);
@@ -60,7 +79,7 @@ export class CareersScraper {
       };
     } catch (error: any) {
       console.error(
-        `[Careers Exception] Error evaluating domain ${url}:`,
+        `[Careers Exception] Error evaluating domain ${currentUrl}:`,
         error.message,
       );
       return {
@@ -89,13 +108,28 @@ export class CareersScraper {
    * Keeps data.json focused on the company's main website while this scraper
    * derives the page it actually needs to inspect.
    */
-  private buildCareersUrl(companyWebsite: string): string {
+  private buildCareersUrlCandidates(companyWebsite: string): string[] {
     const websiteWithProtocol = /^https?:\/\//i.test(companyWebsite)
       ? companyWebsite
       : `https://${companyWebsite}`;
     const homepageUrl = new URL(websiteWithProtocol);
+    const hosts = new Set([
+      homepageUrl.hostname,
+      homepageUrl.hostname.startsWith("www.")
+        ? homepageUrl.hostname.replace(/^www\./, "")
+        : `www.${homepageUrl.hostname}`,
+    ]);
+    const protocols = homepageUrl.protocol === "http:" ? ["http:", "https:"] : ["https:", "http:"];
+    const urls: string[] = [];
 
-    return new URL(CONFIG.CAREERS_PATH, homepageUrl.origin).toString();
+    for (const protocol of protocols) {
+      for (const host of hosts) {
+        const origin = `${protocol}//${host}`;
+        urls.push(new URL(CONFIG.CAREERS_PATH, origin).toString());
+      }
+    }
+
+    return urls;
   }
 
   private async blockVisualAssets(page: Page): Promise<void> {

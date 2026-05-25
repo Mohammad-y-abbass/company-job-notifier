@@ -11,6 +11,7 @@ export class LinkedInScraper {
   async scrape(
     context: BrowserContext,
     companyUrl: string,
+    progressLabel = "LinkedIn",
   ): Promise<ScrapeResult> {
     const page = await context.newPage();
     await this.blockVisualAssets(page);
@@ -30,10 +31,10 @@ export class LinkedInScraper {
 
       const feedUrls = this.buildFeedUrls(companyUrl);
 
-      console.log(`[LinkedIn] Accessing posts feed: ${feedUrls.posts}`);
+      console.log(`[${progressLabel}] Accessing posts feed: ${feedUrls.posts}`);
       const postsPayload = await this.scrapeFeed(page, feedUrls.posts, "posts");
 
-      console.log(`[LinkedIn] Accessing jobs feed: ${feedUrls.jobs}`);
+      console.log(`[${progressLabel}] Accessing jobs feed: ${feedUrls.jobs}`);
       const jobsPayload = await this.scrapeFeed(page, feedUrls.jobs, "jobs");
 
       const finalPayload = [

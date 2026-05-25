@@ -53,6 +53,7 @@ export class BrowserManager {
       deviceScaleFactor: 1,
       isMobile: false,
       hasTouch: false,
+      ignoreHTTPSErrors: true,
       locale: "en-US",
       timezoneId: "America/New_York",
     });
