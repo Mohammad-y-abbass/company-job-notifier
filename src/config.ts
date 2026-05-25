@@ -33,6 +33,7 @@ export const CONFIG = {
   CAREERS_PATH: "/careers",
   LINKEDIN_POSTS_PATH: "posts/",
   LINKEDIN_JOBS_PATH: "jobs/",
+  CAREERS_CONCURRENCY: 5,
   PACING_MIN_MS: 3000,
   PACING_MAX_MS: 9000,
 };

@@ -5,23 +5,171 @@ import { DataManager } from "./manager/files.js";
 import { Notifier } from "./notification/notify.js";
 import { type Company, CONFIG } from "./config.js";
 
-/**
- * Helper to halt execution for a specified duration
- */
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-/**
- * Calculates a randomized, natural delay time between boundaries
- */
 function getRandomPacingDelay(): number {
   const min = CONFIG.PACING_MIN_MS;
   const max = CONFIG.PACING_MAX_MS;
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-/**
- * Main application monitoring loop
- */
+async function checkCareersPage(
+  company: Company,
+  index: number,
+  total: number,
+  browserManager: BrowserManager,
+  careersScraper: CareersScraper,
+  notifier: Notifier,
+  dataManager: DataManager,
+): Promise<void> {
+  if (!company.website) return;
+
+  console.log(
+    `[Careers ${index + 1}/${total}] Checking ${company.name}`,
+  );
+
+  const context = await browserManager.createStealthContext();
+
+  try {
+    const res = await careersScraper.scrape(context, company.website);
+    if (res.success && res.hash) {
+      if (res.hash !== company.lastCareersHash) {
+        await notifier.notify(
+          company,
+          "Careers Page",
+          company.lastCareersHash ?? "",
+          res.hash,
+        );
+        company.lastCareersHash = res.hash;
+      } else {
+        console.log(`[Careers Check] ${company.name} matches baseline.`);
+      }
+    } else if (!res.success) {
+      console.warn(
+        `[Careers Skipped] ${company.name} failed due to error: ${res.error}`,
+      );
+    }
+
+    company.lastChecked = new Date().toISOString();
+    dataManager.updateCompanyState(company);
+    dataManager.saveChangesToDisk();
+  } finally {
+    await context.close();
+  }
+}
+
+async function runCareersChecks(
+  companies: Company[],
+  browserManager: BrowserManager,
+  careersScraper: CareersScraper,
+  notifier: Notifier,
+  dataManager: DataManager,
+): Promise<void> {
+  let nextIndex = 0;
+  const workerCount = Math.min(CONFIG.CAREERS_CONCURRENCY, companies.length);
+
+  async function worker(): Promise<void> {
+    while (nextIndex < companies.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const company = companies[currentIndex];
+
+      if (company) {
+        await checkCareersPage(
+          company,
+          currentIndex,
+          companies.length,
+          browserManager,
+          careersScraper,
+          notifier,
+          dataManager,
+        );
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      await worker();
+    }),
+  );
+}
+
+async function checkLinkedInFeeds(
+  company: Company,
+  index: number,
+  total: number,
+  browserManager: BrowserManager,
+  linkedInScraper: LinkedInScraper,
+  notifier: Notifier,
+  dataManager: DataManager,
+): Promise<boolean> {
+  if (!company.linkedinUrl) return false;
+
+  console.log(
+    `[LinkedIn ${index + 1}/${total}] Checking ${company.name}`,
+  );
+
+  const context = await browserManager.createStealthContext();
+
+  try {
+    const res = await linkedInScraper.scrape(context, company.linkedinUrl);
+    if (res.success && res.hash) {
+      if (res.hash !== company.lastLinkedInHash) {
+        await notifier.notify(
+          company,
+          "LinkedIn Feeds",
+          company.lastLinkedInHash ?? "",
+          res.hash,
+        );
+        company.lastLinkedInHash = res.hash;
+      } else {
+        console.log(`[LinkedIn Check] ${company.name} matches baseline.`);
+      }
+    } else if (!res.success) {
+      console.warn(
+        `[LinkedIn Skipped] ${company.name} failed due to error: ${res.error}`,
+      );
+    }
+
+    company.lastChecked = new Date().toISOString();
+    dataManager.updateCompanyState(company);
+    dataManager.saveChangesToDisk();
+    return true;
+  } finally {
+    await context.close();
+  }
+}
+
+async function runLinkedInChecks(
+  companies: Company[],
+  browserManager: BrowserManager,
+  linkedInScraper: LinkedInScraper,
+  notifier: Notifier,
+  dataManager: DataManager,
+): Promise<void> {
+  for (let i = 0; i < companies.length; i++) {
+    const company = companies[i] as Company;
+    const didScrapeLinkedIn = await checkLinkedInFeeds(
+      company,
+      i,
+      companies.length,
+      browserManager,
+      linkedInScraper,
+      notifier,
+      dataManager,
+    );
+
+    if (didScrapeLinkedIn && i < companies.length - 1) {
+      const structuralDelay = getRandomPacingDelay();
+      console.log(
+        `\n[LinkedIn Pacing] Sleeping for ${(structuralDelay / 1000).toFixed(1)}s before the next LinkedIn target...`,
+      );
+      await sleep(structuralDelay);
+    }
+  }
+}
+
 async function main() {
   const dataManager = new DataManager();
   const notifier = new Notifier();
@@ -31,7 +179,6 @@ async function main() {
   const linkedInScraper = new LinkedInScraper();
 
   try {
-    // 1. Load targets out of your local JSON storage file
     console.log(
       "[Engine Init] Parsing localized company tracking definitions...",
     );
@@ -40,108 +187,32 @@ async function main() {
       `[Engine Init] Successfully loaded ${companies.length} corporate target maps.\n`,
     );
 
-    // 2. Instantiate the global hidden Chromium browser process
     console.log("[Engine Init] Powering up stealth web automation drivers...");
     await browserManager.initialize();
 
-    // 3. Begin processing the companies sequentially
-    for (let i = 0; i < companies.length; i++) {
-      const company = companies[i] as Company;
-      console.log(
-        `================================================================`,
-      );
-      console.log(
-        `▶ [${i + 1} / ${companies.length}] Synchronizing Tracker for: ${company.name}`,
-      );
-      console.log(
-        `================================================================`,
-      );
+    console.log(
+      `[Engine Run] Starting careers checks with ${CONFIG.CAREERS_CONCURRENCY} parallel workers and LinkedIn checks sequentially.`,
+    );
 
-      let isMemoryStateMutated = false;
-      let didScrapeLinkedIn = false;
-
-      // ---------------------------------------------------------
-      // Action Channel A: Corporate Careers Page Verification
-      // ---------------------------------------------------------
-      if (company.website) {
-        // Create a completely clean browser context sandbox for this run
-        const context = await browserManager.createStealthContext();
-
-        const res = await careersScraper.scrape(context, company.website);
-        if (res.success && res.hash) {
-          if (res.hash !== company.lastCareersHash) {
-            await notifier.notify(
-              company,
-              "Careers Page",
-              company.lastCareersHash ?? "",
-              res.hash,
-            );
-            company.lastCareersHash = res.hash;
-            isMemoryStateMutated = true;
-          } else {
-            console.log(
-              `[Careers Check] Content matches current recorded baseline.`,
-            );
-          }
-        }
-
-        // Destroy context to wipe all session footprints, cookies, and localStorage data
-        await context.close();
-      }
-
-      // ---------------------------------------------------------
-      // Action Channel B: Authenticated LinkedIn Post Verification
-      // ---------------------------------------------------------
-      if (company.linkedinUrl) {
-        didScrapeLinkedIn = true;
-        const context = await browserManager.createStealthContext();
-
-        const res = await linkedInScraper.scrape(context, company.linkedinUrl);
-        if (res.success && res.hash) {
-          if (res.hash !== company.lastLinkedInHash) {
-            await notifier.notify(
-              company,
-              "LinkedIn Feeds",
-              company.lastLinkedInHash ?? "",
-              res.hash,
-            );
-            company.lastLinkedInHash = res.hash;
-            isMemoryStateMutated = true;
-          } else {
-            console.log(
-              `[LinkedIn Check] Feed text matches current recorded baseline.`,
-            );
-          }
-        } else if (!res.success) {
-          console.warn(
-            `[LinkedIn Skipped] Tracking bypassed due to error: ${res.error}`,
-          );
-        }
-
-        await context.close();
-      }
-
-      // Update structural runtime markers
-      company.lastChecked = new Date().toISOString();
-      dataManager.updateCompanyState(company);
-
-      // Save memory changes down atomically immediately after finishing each company
-      dataManager.saveChangesToDisk();
-
-      // ---------------------------------------------------------
-      // Human-Emulation Cool Down Engine
-      // ---------------------------------------------------------
-      if (didScrapeLinkedIn && i < companies.length - 1) {
-        const structuralDelay = getRandomPacingDelay();
-        console.log(
-          `\n[LinkedIn Pacing] Sleeping for ${(structuralDelay / 1000).toFixed(1)}s before the next LinkedIn target...`,
-        );
-        await sleep(structuralDelay);
-      }
-    }
+    await Promise.all([
+      runCareersChecks(
+        companies,
+        browserManager,
+        careersScraper,
+        notifier,
+        dataManager,
+      ),
+      runLinkedInChecks(
+        companies,
+        browserManager,
+        linkedInScraper,
+        notifier,
+        dataManager,
+      ),
+    ]);
 
     console.log(
-      "\n✅ [Execution Success] All company channels checked and updated seamlessly.",
+      "\n[Execution Success] All company channels checked and updated.",
     );
   } catch (criticalError: any) {
     console.error(
@@ -149,7 +220,6 @@ async function main() {
       criticalError.message,
     );
   } finally {
-    // 4. Ensure the root browser application instance shuts down cleanly no matter what
     console.log(
       "[Engine Shutdown] Disposing open system automation resources...",
     );
@@ -158,5 +228,4 @@ async function main() {
   }
 }
 
-// Fire runtime
 main();

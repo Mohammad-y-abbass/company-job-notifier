@@ -8,6 +8,7 @@ Daily monitor for company careers pages and LinkedIn company feeds. It checks fo
 - Monitors LinkedIn company posts feeds.
 - Monitors LinkedIn company jobs feeds.
 - Sends Telegram notifications on first baseline capture and later changes.
+- Runs careers checks in parallel while LinkedIn checks continue sequentially.
 - Runs locally or daily with GitHub Actions.
 
 ## Setup
@@ -44,6 +45,16 @@ To show the browser while debugging:
 
 ```env
 HEADLESS_BROWSER=false
+```
+
+## Runtime Behavior
+
+Careers checks run with a small parallel worker pool because each company website is usually a different domain. LinkedIn checks stay sequential with pacing because every request hits `linkedin.com`.
+
+The default careers concurrency is configured in `src/config.ts`:
+
+```ts
+CAREERS_CONCURRENCY: 5
 ```
 
 ## GitHub Actions
